@@ -18,6 +18,10 @@
 > | Hide back face | Hides the source when it is turned away from the camera. |
 >
 > Labels are in English and Spanish. The `master` branch tracks upstream without changes.
+>
+> **Download (Windows x64):** [Releases](https://github.com/hjmeneses/obs-3d-effect/releases/latest). With
+> OBS closed, extract the zip into the OBS folder (`C:\Program Files\obs-studio`); it replaces the original
+> `3d-effect.dll`, and existing filters keep their settings.
 
 Plugin for OBS Studio adding 3D effect filter
 
