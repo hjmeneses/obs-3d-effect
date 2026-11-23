@@ -22,9 +22,12 @@
 > and Ubuntu (sources moved to `src/`); the in-tree build steps below are from the original and no longer
 > apply to it. The `master` branch tracks upstream without changes.
 >
-> **Download (Windows x64):** [Releases](https://github.com/hjmeneses/obs-3d-effect/releases/latest). With
-> OBS closed, extract the zip into the OBS folder (`C:\Program Files\obs-studio`); it replaces the original
-> `3d-effect.dll`, and existing filters keep their settings.
+> **Download:** [Releases](https://github.com/hjmeneses/obs-3d-effect/releases/latest) (OBS 33).
+> Remove the original 3D Effect first, so OBS does not load both. Existing filters keep their settings.
+>
+> - **Windows:** with OBS closed, extract the zip into `C:\ProgramData\obs-studio\plugins`.
+> - **Ubuntu:** `sudo apt install ./3d-effect-<version>-x86_64-linux-gnu.deb`.
+> - **macOS:** coming soon.
 
 Plugin for OBS Studio adding 3D effect filter
 
