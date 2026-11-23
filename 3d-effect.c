@@ -3,20 +3,30 @@
 #include <obs-module.h>
 #include "graphics/math-defs.h"
 #include "graphics/matrix4.h"
+#include "graphics/vec4.h"
 
 #define MODE_PERSPECTIVE 0
 #define MODE_ORTHOGRAPHIC 1
 
 float (*move_get_transition_filter)(obs_source_t *filter_from, obs_source_t **filter_to) = NULL;
 
-struct effect_3d {
-	obs_source_t *source;
-	int mode;
+struct effect_3d_transform {
 	float fov;
 	struct vec3 position;
 	struct vec3 rotation;
 	struct vec2 scale;
 	struct vec2 shear;
+};
+
+struct effect_3d {
+	obs_source_t *source;
+	int mode;
+	struct effect_3d_transform transform;
+
+	bool keep_size;   // FOV no cambia el tamaño en reposo; posición en px reales
+	float margin;     // % de la fuente agregado a cada lado para que el giro no se corte
+	bool supersample; // dibuja al doble de resolución y reduce: orillas suavizadas
+	bool hide_back;   // no dibuja cuando se ve la cara trasera
 
 	bool processed_frame;
 	gs_texrender_t *render;
@@ -32,21 +42,29 @@ static const char *effect_3d_get_name(void *type_data)
 void effect_3d_update(void *data, obs_data_t *settings)
 {
 	struct effect_3d *context = data;
+	struct effect_3d_transform *t = &context->transform;
 	context->mode = (int)obs_data_get_int(settings, "mode");
-	context->fov = (float)obs_data_get_double(settings, "fov");
-	context->rotation.x = (float)obs_data_get_double(settings, "rot_x");
-	context->rotation.y = (float)obs_data_get_double(settings, "rot_y");
-	context->rotation.z = (float)obs_data_get_double(settings, "rot_z");
+	t->fov = (float)obs_data_get_double(settings, "fov");
+	t->rotation.x = (float)obs_data_get_double(settings, "rot_x");
+	t->rotation.y = (float)obs_data_get_double(settings, "rot_y");
+	t->rotation.z = (float)obs_data_get_double(settings, "rot_z");
 
-	context->position.x = (float)obs_data_get_double(settings, "pos_x");
-	context->position.y = (float)obs_data_get_double(settings, "pos_y");
-	context->position.z = (float)obs_data_get_double(settings, "pos_z");
+	t->position.x = (float)obs_data_get_double(settings, "pos_x");
+	t->position.y = (float)obs_data_get_double(settings, "pos_y");
+	t->position.z = (float)obs_data_get_double(settings, "pos_z");
 
-	context->scale.x = (float)obs_data_get_double(settings, "scale_x") / 100.0f;
-	context->scale.y = (float)obs_data_get_double(settings, "scale_y") / 100.0f;
+	t->scale.x = (float)obs_data_get_double(settings, "scale_x") / 100.0f;
+	t->scale.y = (float)obs_data_get_double(settings, "scale_y") / 100.0f;
 
-	context->shear.x = (float)obs_data_get_double(settings, "shear_x") / 100.0f;
-	context->shear.y = (float)obs_data_get_double(settings, "shear_y") / 100.0f;
+	t->shear.x = (float)obs_data_get_double(settings, "shear_x") / 100.0f;
+	t->shear.y = (float)obs_data_get_double(settings, "shear_y") / 100.0f;
+
+	context->keep_size = obs_data_get_bool(settings, "keep_size");
+	context->margin = (float)obs_data_get_double(settings, "margin");
+	if (context->margin < 0.0f)
+		context->margin = 0.0f;
+	context->supersample = obs_data_get_bool(settings, "supersample");
+	context->hide_back = obs_data_get_bool(settings, "hide_back");
 }
 
 static void *effect_3d_create(obs_data_t *settings, obs_source_t *source)
@@ -68,6 +86,14 @@ static void effect_3d_destroy(void *data)
 	bfree(context);
 }
 
+static bool effect_3d_mode_changed(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(property);
+	const bool perspective = obs_data_get_int(settings, "mode") == MODE_PERSPECTIVE;
+	obs_property_set_visible(obs_properties_get(props, "fov"), perspective);
+	return true;
+}
+
 static obs_properties_t *effect_3d_properties(void *data)
 {
 	UNUSED_PARAMETER(data);
@@ -77,6 +103,7 @@ static obs_properties_t *effect_3d_properties(void *data)
 		obs_properties_add_list(ppts, "mode", obs_module_text("Mode"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(p, obs_module_text("Perspective"), MODE_PERSPECTIVE);
 	obs_property_list_add_int(p, obs_module_text("Orthographic"), MODE_ORTHOGRAPHIC);
+	obs_property_set_modified_callback(p, effect_3d_mode_changed);
 
 	p = obs_properties_add_float_slider(ppts, "fov", obs_module_text("FieldOfView"), 0.1, 180.0, 0.01);
 
@@ -120,6 +147,22 @@ static obs_properties_t *effect_3d_properties(void *data)
 	obs_property_float_set_suffix(p, "%");
 
 	obs_properties_add_group(ppts, "shear", obs_module_text("Shear"), OBS_GROUP_NORMAL, shear);
+
+	obs_properties_t *opts = obs_properties_create();
+
+	p = obs_properties_add_bool(opts, "keep_size", obs_module_text("KeepSize"));
+	obs_property_set_long_description(p, obs_module_text("KeepSize.Description"));
+
+	p = obs_properties_add_float_slider(opts, "margin", obs_module_text("Margin"), 0.0, 100.0, 1.0);
+	obs_property_float_set_suffix(p, "%");
+	obs_property_set_long_description(p, obs_module_text("Margin.Description"));
+
+	p = obs_properties_add_bool(opts, "supersample", obs_module_text("Supersample"));
+	obs_property_set_long_description(p, obs_module_text("Supersample.Description"));
+
+	obs_properties_add_bool(opts, "hide_back", obs_module_text("HideBack"));
+
+	obs_properties_add_group(ppts, "options", obs_module_text("Options"), OBS_GROUP_NORMAL, opts);
 
 	obs_properties_add_text(ppts, "plugin_info",
 				"<a href=\"https://obsproject.com/forum/resources/3d-effect.1692/\">3D Effect</a> (" PROJECT_VERSION
@@ -175,6 +218,133 @@ static const char *get_tech_name_and_multiplier(enum gs_color_space current_spac
 	return tech_name;
 }
 
+// Pixeles que el margen agrega a cada lado de una dimensión
+static uint32_t effect_3d_margin_px(const struct effect_3d *context, uint32_t size)
+{
+	return (uint32_t)(size * context->margin / 100.0f + 0.5f);
+}
+
+static uint32_t effect_3d_get_width(void *data)
+{
+	struct effect_3d *context = data;
+	obs_source_t *target = obs_filter_get_target(context->source);
+	if (!target)
+		return 0;
+	const uint32_t w = obs_source_get_base_width(target);
+	return w + 2 * effect_3d_margin_px(context, w);
+}
+
+static uint32_t effect_3d_get_height(void *data)
+{
+	struct effect_3d *context = data;
+	obs_source_t *target = obs_filter_get_target(context->source);
+	if (!target)
+		return 0;
+	const uint32_t h = obs_source_get_base_height(target);
+	return h + 2 * effect_3d_margin_px(context, h);
+}
+
+static float lerpf(float a, float b, float f)
+{
+	return b * f + a * (1.0f - f);
+}
+
+// Mezcla dos transformaciones (f = 0: a, f = 1: b), para las transiciones de Move
+static void effect_3d_transform_lerp(struct effect_3d_transform *dst, const struct effect_3d_transform *a,
+				      const struct effect_3d_transform *b, float f)
+{
+	dst->fov = lerpf(a->fov, b->fov, f);
+	vec3_set(&dst->position, lerpf(a->position.x, b->position.x, f), lerpf(a->position.y, b->position.y, f),
+		 lerpf(a->position.z, b->position.z, f));
+	vec3_set(&dst->rotation, lerpf(a->rotation.x, b->rotation.x, f), lerpf(a->rotation.y, b->rotation.y, f),
+		 lerpf(a->rotation.z, b->rotation.z, f));
+	vec2_set(&dst->scale, lerpf(a->scale.x, b->scale.x, f), lerpf(a->scale.y, b->scale.y, f));
+	vec2_set(&dst->shear, lerpf(a->shear.x, b->shear.x, f), lerpf(a->shear.y, b->shear.y, f));
+}
+
+// Transformación neutra: lo que se ve sin el filtro (destino de "mover a cero")
+static void effect_3d_transform_identity(struct effect_3d_transform *t)
+{
+	t->fov = 90.0f;
+	vec3_zero(&t->position);
+	vec3_zero(&t->rotation);
+	vec2_set(&t->scale, 1.0f, 1.0f);
+	vec2_zero(&t->shear);
+}
+
+// Proyección y matrices para dibujar la fuente (w x h) con la transformación t.
+// kx, ky > 1 amplían la vista para el margen: la fuente ocupa el centro y lo que gira hacia
+// afuera cabe en el resto.
+static void effect_3d_set_matrices(const struct effect_3d *context, const struct effect_3d_transform *t, float w, float h,
+				   float kx, float ky)
+{
+	if (context->mode == MODE_ORTHOGRAPHIC) {
+		gs_ortho(-kx, kx, -ky, ky, -(float)(1 << 22), (float)(1 << 22));
+	} else {
+		const float near_z = 1.0f / (float)(1 << 22);
+		const float far_z = (float)(1 << 22);
+		if (kx == 1.0f && ky == 1.0f) {
+			gs_perspective(t->fov, w / h, near_z, far_z);
+		} else {
+			// lo mismo que gs_perspective, con el frustum ampliado
+			const float ymax = near_z * tanf(RAD(t->fov) * 0.5f);
+			const float xmax = ymax * (w / h);
+			gs_frustum(-xmax * kx, xmax * kx, -ymax * ky, ymax * ky, near_z, far_z);
+		}
+		// Con la cámara a 1 la fuente sin girar solo llena su recuadro con FOV 90.
+		// A 1/tan(fov/2) lo llena con cualquier FOV, como la perspectiva de CSS.
+		float dist = 1.0f;
+		if (context->keep_size)
+			dist = 1.0f / tanf(RAD(fminf(t->fov, 179.0f)) * 0.5f);
+		gs_matrix_translate3f(0.0f, 0.0f, -dist);
+		gs_matrix_scale3f(w / h, 1.0f, 1.0f);
+	}
+	if (context->keep_size) {
+		// Unidades reales: la posición va en px de la fuente (también Z) y no la cambia la escala
+		gs_matrix_translate3f(t->position.x / w * 2.0f, t->position.y / h * 2.0f, t->position.z / h * 2.0f);
+		gs_matrix_scale3f(t->scale.x, t->scale.y, 1.0f);
+	} else {
+		gs_matrix_scale3f(t->scale.x, t->scale.y, 1.0f);
+		gs_matrix_translate3f(t->position.x / w * 2.0f, t->position.y / h * 2.0f, t->position.z / (w + h));
+	}
+	gs_matrix_scale3f(h / w, 1.0f, 1.0f);
+	gs_matrix_rotaa4f(1.0f, 0.0f, 0.0f, RAD(t->rotation.x));
+	gs_matrix_rotaa4f(0.0f, 1.0f, 0.0f, RAD(t->rotation.y));
+	gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f, RAD(t->rotation.z));
+	gs_matrix_scale3f(w / h, 1.0f, 1.0f);
+	struct matrix4 shear_matrix;
+	matrix4_identity(&shear_matrix);
+	shear_matrix.y.x = -t->shear.x;
+	shear_matrix.x.y = t->shear.y;
+	gs_matrix_mul(&shear_matrix);
+	gs_matrix_translate3f(-1.0f, -1.0f, 0.0f);
+	gs_matrix_scale3f(2.0f / w, 2.0f / h, 1.0f);
+}
+
+// ¿La cara que se ve es la trasera? Se calcula con la normal de la fuente ya transformada:
+// en reposo apunta hacia la cámara (+z) y el centro está delante (z < 0).
+static bool effect_3d_facing_away(const struct effect_3d *context, float w, float h)
+{
+	struct matrix4 m;
+	gs_matrix_get(&m);
+	struct vec4 v, ex, ey, c;
+	vec4_set(&v, w, 0.0f, 0.0f, 0.0f);
+	vec4_transform(&ex, &v, &m);
+	vec4_set(&v, 0.0f, h, 0.0f, 0.0f);
+	vec4_transform(&ey, &v, &m);
+	vec4_set(&v, w * 0.5f, h * 0.5f, 0.0f, 1.0f);
+	vec4_transform(&c, &v, &m);
+
+	struct vec3 a, b, n, center;
+	vec3_set(&a, ex.x, ex.y, ex.z);
+	vec3_set(&b, ey.x, ey.y, ey.z);
+	vec3_cross(&n, &a, &b);
+	if (context->mode == MODE_ORTHOGRAPHIC)
+		return n.z < 0.0f;
+	vec3_set(&center, c.x, c.y, c.z);
+	return vec3_dot(&n, &center) > 0.0f;
+}
+
 void effect_3d_draw_frame(struct effect_3d *context, uint32_t w, uint32_t h)
 {
 	const enum gs_color_space current_space = gs_get_color_space();
@@ -195,6 +365,7 @@ void effect_3d_draw_frame(struct effect_3d *context, uint32_t w, uint32_t h)
 	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"), tex);
 	gs_effect_set_float(gs_effect_get_param_by_name(effect, "multiplier"), multiplier);
 
+	// Con supersampling la textura mide el doble: el muestreo lineal promedia 2x2 pixeles
 	while (gs_effect_loop(effect, technique))
 		gs_draw_sprite(tex, 0, w, h);
 
@@ -216,13 +387,17 @@ void effect_3d_video_render(void *data, gs_effect_t *eff)
 		return;
 	}
 
+	// Tamaño de salida con el margen
+	const uint32_t out_width = base_width + 2 * effect_3d_margin_px(context, base_width);
+	const uint32_t out_height = base_height + 2 * effect_3d_margin_px(context, base_height);
+
 	float f = 0.0f;
 	obs_source_t *filter_to = NULL;
 	if (move_get_transition_filter)
 		f = move_get_transition_filter(context->source, &filter_to);
 
 	if (f == 0.0f && context->processed_frame) {
-		effect_3d_draw_frame(context, base_width, base_height);
+		effect_3d_draw_frame(context, out_width, out_height);
 		return;
 	}
 
@@ -240,7 +415,8 @@ void effect_3d_video_render(void *data, gs_effect_t *eff)
 		gs_texrender_reset(context->render);
 	}
 
-	if (gs_texrender_begin_with_color_space(context->render, base_width, base_height, space)) {
+	const uint32_t ss = context->supersample ? 2 : 1;
+	if (gs_texrender_begin_with_color_space(context->render, out_width * ss, out_height * ss, space)) {
 		gs_viewport_push();
 		gs_matrix_push();
 		gs_blend_state_push();
@@ -257,100 +433,29 @@ void effect_3d_video_render(void *data, gs_effect_t *eff)
 		bool async = (parent_flags & OBS_SOURCE_ASYNC) != 0;
 		vec4_zero(&clear_color);
 		gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
+
+		// Transformación de este cuadro: la del filtro o, durante una transición de Move,
+		// la mezcla con el otro filtro (o con la neutra al ir a cero)
+		struct effect_3d_transform t = context->transform;
 		if (f > 0.0f && filter_to != context->source) {
+			struct effect_3d_transform to;
 			if (filter_to) {
-				// move between filters
 				struct effect_3d *context2 = obs_obj_get_data(filter_to);
-				if (context->mode == MODE_ORTHOGRAPHIC) {
-					gs_ortho(-1., 1., -1., 1., -(float)(1 << 22), (float)(1 << 22));
-				} else {
-					gs_ortho(0.0f, (float)base_width, 0.0f, (float)base_height, -100.0f, 100.0f);
-					gs_perspective(context2->fov * f + context->fov * (1.0f - f), w / h,
-						       1.0f / (float)(1 << 22), (float)(1 << 22));
-
-					gs_matrix_translate3f(0.0f, 0.0f, -1.0f);
-					gs_matrix_scale3f(w / h, 1.0f, 1.0f);
-				}
-				gs_matrix_scale3f(context2->scale.x * f + context->scale.x * (1.0f - f),
-						  context2->scale.y * f + context->scale.y * (1.0f - f), 1.0f);
-				gs_matrix_translate3f((context2->position.x * f + context->position.x * (1.0f - f)) / w * 2.0f,
-						      (context2->position.y * f + context->position.y * (1.0f - f)) / h * 2.0f,
-						      (context2->position.z * f + context->position.z * (1.0f - f)) / (w + h));
-				gs_matrix_scale3f(h / w, 1.0f, 1.0f);
-				gs_matrix_rotaa4f(1.0f, 0.0f, 0.0f,
-						  RAD(context2->rotation.x * f + context->rotation.x * (1.0f - f)));
-				gs_matrix_rotaa4f(0.0f, 1.0f, 0.0f,
-						  RAD(context2->rotation.y * f + context->rotation.y * (1.0f - f)));
-				gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f,
-						  RAD(context2->rotation.z * f + context->rotation.z * (1.0f - f)));
-				gs_matrix_scale3f(w / h, 1.0f, 1.0f);
-				struct matrix4 shear_matrix;
-				matrix4_identity(&shear_matrix);
-				shear_matrix.y.x = -(context2->shear.x * f + context->shear.x * (1.0f - f));
-				shear_matrix.x.y = context2->shear.y * f + context->shear.y * (1.0f - f);
-				gs_matrix_mul(&shear_matrix);
-				gs_matrix_translate3f(-1.0f, -1.0f, 0.0f);
-				gs_matrix_scale3f(2.0f / w, 2.0f / h, 1.0f);
+				to = context2->transform;
 			} else {
-				// move to zero
-				if (context->mode == MODE_ORTHOGRAPHIC) {
-					gs_ortho(-1., 1., -1., 1., -(float)(1 << 22), (float)(1 << 22));
-				} else {
-					gs_ortho(0.0f, (float)base_width, 0.0f, (float)base_height, -100.0f, 100.0f);
-					gs_perspective(90.0f * f + context->fov * (1.0f - f), w / h, 1.0f / (float)(1 << 22),
-						       (float)(1 << 22));
-
-					gs_matrix_translate3f(0.0f, 0.0f, -1.0f);
-					gs_matrix_scale3f(w / h, 1.0f, 1.0f);
-				}
-				gs_matrix_scale3f(f + context->scale.x * (1.0f - f), f + context->scale.y * (1.0f - f), 1.0f);
-				gs_matrix_translate3f(context->position.x * (1.0f - f) / w * 2.0f,
-						      context->position.y * (1.0f - f) / h * 2.0f,
-						      context->position.z * (1.0f - f) / (w + h));
-				gs_matrix_scale3f(h / w, 1.0f, 1.0f);
-				gs_matrix_rotaa4f(1.0f, 0.0f, 0.0f, RAD(context->rotation.x * (1.0f - f)));
-				gs_matrix_rotaa4f(0.0f, 1.0f, 0.0f, RAD(context->rotation.y * (1.0f - f)));
-				gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f, RAD(context->rotation.z * (1.0f - f)));
-				gs_matrix_scale3f(w / h, 1.0f, 1.0f);
-				struct matrix4 shear_matrix2;
-				matrix4_identity(&shear_matrix2);
-				shear_matrix2.y.x = -(context->shear.x * (1.0f - f));
-				shear_matrix2.x.y = context->shear.y * (1.0f - f);
-				gs_matrix_mul(&shear_matrix2);
-				gs_matrix_translate3f(-1.0f, -1.0f, 0.0f);
-				gs_matrix_scale3f(2.0f / w, 2.0f / h, 1.0f);
+				effect_3d_transform_identity(&to);
 			}
-		} else {
-			if (context->mode == MODE_ORTHOGRAPHIC) {
-				gs_ortho(-1., 1., -1., 1., -(float)(1 << 22), (float)(1 << 22));
-			} else {
-				gs_ortho(0.0f, (float)base_width, 0.0f, (float)base_height, -100.0f, 100.0f);
-				gs_perspective(context->fov, w / h, 1.0f / (float)(1 << 22), (float)(1 << 22));
-
-				gs_matrix_translate3f(0.0f, 0.0f, -1.0f);
-				gs_matrix_scale3f(w / h, 1.0f, 1.0f);
-			}
-			gs_matrix_scale3f(context->scale.x, context->scale.y, 1.0f);
-			gs_matrix_translate3f(context->position.x / w * 2.0f, context->position.y / h * 2.0f,
-					      context->position.z / (w + h));
-			gs_matrix_scale3f(h / w, 1.0f, 1.0f);
-			gs_matrix_rotaa4f(1.0f, 0.0f, 0.0f, RAD(context->rotation.x));
-			gs_matrix_rotaa4f(0.0f, 1.0f, 0.0f, RAD(context->rotation.y));
-			gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f, RAD(context->rotation.z));
-			gs_matrix_scale3f(w / h, 1.0f, 1.0f);
-			struct matrix4 shear_matrix3;
-			matrix4_identity(&shear_matrix3);
-			shear_matrix3.y.x = -context->shear.x;
-			shear_matrix3.x.y = context->shear.y;
-			gs_matrix_mul(&shear_matrix3);
-			gs_matrix_translate3f(-1.0f, -1.0f, 0.0f);
-			gs_matrix_scale3f(2.0f / w, 2.0f / h, 1.0f);
+			effect_3d_transform_lerp(&t, &context->transform, &to, f);
 		}
 
-		if (target == parent && !custom_draw && !async)
-			obs_source_default_render(target);
-		else
-			obs_source_video_render(target);
+		effect_3d_set_matrices(context, &t, w, h, (float)out_width / w, (float)out_height / h);
+
+		if (!context->hide_back || !effect_3d_facing_away(context, w, h)) {
+			if (target == parent && !custom_draw && !async)
+				obs_source_default_render(target);
+			else
+				obs_source_video_render(target);
+		}
 		gs_blend_state_pop();
 		gs_matrix_pop();
 		gs_viewport_pop();
@@ -359,7 +464,7 @@ void effect_3d_video_render(void *data, gs_effect_t *eff)
 	}
 	if (f == 0.0f)
 		context->processed_frame = true;
-	effect_3d_draw_frame(context, base_width, base_height);
+	effect_3d_draw_frame(context, out_width, out_height);
 }
 
 void effect_3d_video_tick(void *data, float seconds)
@@ -376,6 +481,11 @@ void effect_3d_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "scale_y", 100.0);
 	obs_data_set_default_double(settings, "shear_x", 0.0);
 	obs_data_set_default_double(settings, "shear_y", 0.0);
+	// Las opciones nuevas van apagadas para que las escenas existentes se vean igual
+	obs_data_set_default_bool(settings, "keep_size", false);
+	obs_data_set_default_double(settings, "margin", 0.0);
+	obs_data_set_default_bool(settings, "supersample", false);
+	obs_data_set_default_bool(settings, "hide_back", false);
 }
 
 OBS_DECLARE_MODULE()
@@ -404,6 +514,8 @@ struct obs_source_info effect_3d_info = {
 	.video_tick = effect_3d_video_tick,
 	.update = effect_3d_update,
 	.load = effect_3d_update,
+	.get_width = effect_3d_get_width,
+	.get_height = effect_3d_get_height,
 };
 
 bool obs_module_load(void)
