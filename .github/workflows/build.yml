@@ -2,9 +2,10 @@ name: build obs plugin
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, improvements ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:
 
 env:
   PLUGIN_NAME: 3d-effect
