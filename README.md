@@ -17,7 +17,10 @@
 > | Supersampling 2x | Renders at twice the resolution and scales down: smoother edges and less shimmering at steep angles, at the cost of more GPU. |
 > | Hide back face | Hides the source when it is turned away from the camera. |
 >
-> Labels are in English and Spanish. The `master` branch tracks upstream without changes.
+> Labels are in English and Spanish. The branch also builds with the current
+> [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) against OBS 33 on Windows, macOS
+> and Ubuntu (sources moved to `src/`); the in-tree build steps below are from the original and no longer
+> apply to it. The `master` branch tracks upstream without changes.
 >
 > **Download (Windows x64):** [Releases](https://github.com/hjmeneses/obs-3d-effect/releases/latest). With
 > OBS closed, extract the zip into the OBS folder (`C:\Program Files\obs-studio`); it replaces the original
