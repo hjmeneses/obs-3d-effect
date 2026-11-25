@@ -165,8 +165,9 @@ static obs_properties_t *effect_3d_properties(void *data)
 	obs_properties_add_group(ppts, "options", obs_module_text("Options"), OBS_GROUP_NORMAL, opts);
 
 	obs_properties_add_text(ppts, "plugin_info",
-				"<a href=\"https://obsproject.com/forum/resources/3d-effect.1692/\">3D Effect</a> (" PROJECT_VERSION
-				") by <a href=\"https://www.exeldro.com\">Exeldro</a>",
+				"3D Effect 2 (" PROJECT_VERSION ") by hjmeneses, based on "
+				"<a href=\"https://obsproject.com/forum/resources/3d-effect.1692/\">3D Effect</a> by "
+				"<a href=\"https://www.exeldro.com\">Exeldro</a>",
 				OBS_TEXT_INFO);
 	return ppts;
 }
@@ -490,7 +491,7 @@ void effect_3d_defaults(obs_data_t *settings)
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_AUTHOR("Exeldro");
-OBS_MODULE_USE_DEFAULT_LOCALE("3d-effect", "en-US")
+OBS_MODULE_USE_DEFAULT_LOCALE("3d-effect-2", "en-US")
 MODULE_EXPORT const char *obs_module_description(void)
 {
 	return obs_module_text("Description");
@@ -502,7 +503,7 @@ MODULE_EXPORT const char *obs_module_name(void)
 }
 
 struct obs_source_info effect_3d_info = {
-	.id = "3d_effect_filter",
+	.id = "3d_effect_2_filter", // distinto del original: los dos conviven
 	.type = OBS_SOURCE_TYPE_FILTER,
 	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB,
 	.get_name = effect_3d_get_name,
@@ -520,7 +521,7 @@ struct obs_source_info effect_3d_info = {
 
 bool obs_module_load(void)
 {
-	blog(LOG_INFO, "[3D Effect] loaded version %s", PROJECT_VERSION);
+	blog(LOG_INFO, "[3D Effect 2] loaded version %s", PROJECT_VERSION);
 	obs_register_source(&effect_3d_info);
 	return true;
 }
