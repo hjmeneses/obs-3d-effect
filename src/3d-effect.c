@@ -27,6 +27,7 @@ struct effect_3d {
 	float margin;     // % de la fuente agregado a cada lado para que el giro no se corte
 	bool supersample; // dibuja al doble de resolución y reduce: orillas suavizadas
 	bool hide_back;   // no dibuja cuando se ve la cara trasera
+	bool direct;      // dibuja directo en la escena (como BFX): nada se corta y el margen sobra
 
 	bool processed_frame;
 	gs_texrender_t *render;
@@ -65,6 +66,7 @@ void effect_3d_update(void *data, obs_data_t *settings)
 		context->margin = 0.0f;
 	context->supersample = obs_data_get_bool(settings, "supersample");
 	context->hide_back = obs_data_get_bool(settings, "hide_back");
+	context->direct = obs_data_get_bool(settings, "direct");
 }
 
 static void *effect_3d_create(obs_data_t *settings, obs_source_t *source)
@@ -91,6 +93,16 @@ static bool effect_3d_mode_changed(obs_properties_t *props, obs_property_t *prop
 	UNUSED_PARAMETER(property);
 	const bool perspective = obs_data_get_int(settings, "mode") == MODE_PERSPECTIVE;
 	obs_property_set_visible(obs_properties_get(props, "fov"), perspective);
+	return true;
+}
+
+static bool effect_3d_direct_changed(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(property);
+	// Dibujando directo no hay textura que recortar ni que reducir
+	const bool direct = obs_data_get_bool(settings, "direct");
+	obs_property_set_visible(obs_properties_get(props, "margin"), !direct);
+	obs_property_set_visible(obs_properties_get(props, "supersample"), !direct);
 	return true;
 }
 
@@ -162,6 +174,10 @@ static obs_properties_t *effect_3d_properties(void *data)
 
 	obs_properties_add_bool(opts, "hide_back", obs_module_text("HideBack"));
 
+	p = obs_properties_add_bool(opts, "direct", obs_module_text("Direct"));
+	obs_property_set_long_description(p, obs_module_text("Direct.Description"));
+	obs_property_set_modified_callback(p, effect_3d_direct_changed);
+
 	obs_properties_add_group(ppts, "options", obs_module_text("Options"), OBS_GROUP_NORMAL, opts);
 
 	obs_properties_add_text(ppts, "plugin_info",
@@ -222,6 +238,8 @@ static const char *get_tech_name_and_multiplier(enum gs_color_space current_spac
 // Pixeles que el margen agrega a cada lado de una dimensión
 static uint32_t effect_3d_margin_px(const struct effect_3d *context, uint32_t size)
 {
+	if (context->direct)
+		return 0;
 	return (uint32_t)(size * context->margin / 100.0f + 0.5f);
 }
 
@@ -276,8 +294,8 @@ static void effect_3d_transform_identity(struct effect_3d_transform *t)
 // Proyección y matrices para dibujar la fuente (w x h) con la transformación t.
 // kx, ky > 1 amplían la vista para el margen: la fuente ocupa el centro y lo que gira hacia
 // afuera cabe en el resto.
-static void effect_3d_set_matrices(const struct effect_3d *context, const struct effect_3d_transform *t, float w, float h,
-				   float kx, float ky)
+static void effect_3d_set_projection(const struct effect_3d *context, const struct effect_3d_transform *t, float w,
+				     float h, float kx, float ky)
 {
 	if (context->mode == MODE_ORTHOGRAPHIC) {
 		gs_ortho(-kx, kx, -ky, ky, -(float)(1 << 22), (float)(1 << 22));
@@ -292,6 +310,13 @@ static void effect_3d_set_matrices(const struct effect_3d *context, const struct
 			const float xmax = ymax * (w / h);
 			gs_frustum(-xmax * kx, xmax * kx, -ymax * ky, ymax * ky, near_z, far_z);
 		}
+	}
+}
+
+// Cámara y transformación de la fuente sobre la pila de matrices (espacio de vista)
+static void effect_3d_apply_model(const struct effect_3d *context, const struct effect_3d_transform *t, float w, float h)
+{
+	if (context->mode != MODE_ORTHOGRAPHIC) {
 		// Con la cámara a 1 la fuente sin girar solo llena su recuadro con FOV 90.
 		// A 1/tan(fov/2) lo llena con cualquier FOV, como la perspectiva de CSS.
 		float dist = 1.0f;
@@ -320,6 +345,46 @@ static void effect_3d_set_matrices(const struct effect_3d *context, const struct
 	gs_matrix_mul(&shear_matrix);
 	gs_matrix_translate3f(-1.0f, -1.0f, 0.0f);
 	gs_matrix_scale3f(2.0f / w, 2.0f / h, 1.0f);
+}
+
+static void effect_3d_set_matrices(const struct effect_3d *context, const struct effect_3d_transform *t, float w, float h,
+				   float kx, float ky)
+{
+	effect_3d_set_projection(context, t, w, h, kx, ky);
+	effect_3d_apply_model(context, t, w, h);
+}
+
+// Matriz que lleva un pixel de la fuente (w x h) a su lugar en el recuadro de la propia fuente,
+// con w de perspectiva y z = 0: se multiplica sobre la matriz de la escena y la GPU hace la
+// división, así que lo que gira hacia afuera se dibuja fuera del recuadro (sin recorte) y la
+// profundidad nunca se sale de rango. Es la misma idea del vertex shader de BFX.
+static void effect_3d_direct_matrix(struct matrix4 *dst, const struct effect_3d *context,
+				    const struct effect_3d_transform *t, float w, float h)
+{
+	struct matrix4 model, proj;
+	gs_matrix_push();
+	gs_matrix_identity();
+	effect_3d_apply_model(context, t, w, h);
+	gs_matrix_get(&model);
+	gs_matrix_pop();
+
+	if (context->mode == MODE_ORTHOGRAPHIC) {
+		// ndc = vista; pixel = (ndc + 1) / 2 * tamaño
+		vec4_set(&proj.x, w * 0.5f, 0.0f, 0.0f, 0.0f);
+		vec4_set(&proj.y, 0.0f, h * 0.5f, 0.0f, 0.0f);
+		vec4_set(&proj.z, 0.0f, 0.0f, 0.0f, 0.0f);
+		vec4_set(&proj.t, w * 0.5f, h * 0.5f, 0.0f, 1.0f);
+	} else {
+		// ndc_x = X / (-Z tx), ndc_y = Y / (-Z ty), igual que el frustum de gs_perspective;
+		// pixel·w' con w' = -Z
+		const float ty = tanf(RAD(t->fov) * 0.5f);
+		const float tx = ty * (w / h);
+		vec4_set(&proj.x, w / (2.0f * tx), 0.0f, 0.0f, 0.0f);
+		vec4_set(&proj.y, 0.0f, h / (2.0f * ty), 0.0f, 0.0f);
+		vec4_set(&proj.z, -w * 0.5f, -h * 0.5f, 0.0f, -1.0f);
+		vec4_set(&proj.t, 0.0f, 0.0f, 0.0f, 0.0f);
+	}
+	matrix4_mul(dst, &model, &proj);
 }
 
 // ¿La cara que se ve es la trasera? Se calcula con la normal de la fuente ya transformada:
@@ -374,6 +439,69 @@ void effect_3d_draw_frame(struct effect_3d *context, uint32_t w, uint32_t h)
 	gs_blend_state_pop();
 }
 
+// Dibuja la fuente tal cual en la textura (una vez por cuadro) y la pinta con la perspectiva
+// directamente sobre la escena
+static void effect_3d_render_direct(struct effect_3d *context, obs_source_t *target, obs_source_t *parent,
+				    const struct effect_3d_transform *t)
+{
+	const uint32_t bw = obs_source_get_base_width(target);
+	const uint32_t bh = obs_source_get_base_height(target);
+	const float w = (float)bw, h = (float)bh;
+
+	if (!context->processed_frame) {
+		const enum gs_color_space preferred_spaces[] = {
+			GS_CS_SRGB,
+			GS_CS_SRGB_16F,
+			GS_CS_709_EXTENDED,
+		};
+		const enum gs_color_space space =
+			obs_source_get_color_space(target, OBS_COUNTOF(preferred_spaces), preferred_spaces);
+		const enum gs_color_format format = gs_get_format_from_space(space);
+		if (!context->render || gs_texrender_get_format(context->render) != format) {
+			gs_texrender_destroy(context->render);
+			context->render = gs_texrender_create(format, GS_ZS_NONE);
+		} else {
+			gs_texrender_reset(context->render);
+		}
+		if (gs_texrender_begin_with_color_space(context->render, bw, bh, space)) {
+			gs_blend_state_push();
+			gs_reset_blend_state();
+			gs_enable_blending(false);
+			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+			struct vec4 clear_color;
+			vec4_zero(&clear_color);
+			gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
+			gs_ortho(0.0f, w, 0.0f, h, -100.0f, 100.0f);
+			const uint32_t flags = obs_source_get_output_flags(target);
+			if (target == parent && !(flags & OBS_SOURCE_CUSTOM_DRAW) && !(flags & OBS_SOURCE_ASYNC))
+				obs_source_default_render(target);
+			else
+				obs_source_video_render(target);
+			gs_blend_state_pop();
+			gs_texrender_end(context->render);
+			context->space = space;
+		}
+		context->processed_frame = true;
+	}
+
+	if (context->hide_back) {
+		gs_matrix_push();
+		gs_matrix_identity();
+		effect_3d_apply_model(context, t, w, h);
+		const bool away = effect_3d_facing_away(context, w, h);
+		gs_matrix_pop();
+		if (away)
+			return;
+	}
+
+	struct matrix4 m;
+	effect_3d_direct_matrix(&m, context, t, w, h);
+	gs_matrix_push();
+	gs_matrix_mul(&m);
+	effect_3d_draw_frame(context, bw, bh);
+	gs_matrix_pop();
+}
+
 void effect_3d_video_render(void *data, gs_effect_t *eff)
 {
 	UNUSED_PARAMETER(eff);
@@ -396,6 +524,25 @@ void effect_3d_video_render(void *data, gs_effect_t *eff)
 	obs_source_t *filter_to = NULL;
 	if (move_get_transition_filter)
 		f = move_get_transition_filter(context->source, &filter_to);
+
+	// Transformación de este cuadro: la del filtro o, durante una transición de Move,
+	// la mezcla con el otro filtro (o con la neutra al ir a cero)
+	struct effect_3d_transform t = context->transform;
+	if (f > 0.0f && filter_to != context->source) {
+		struct effect_3d_transform to;
+		if (filter_to) {
+			struct effect_3d *context2 = obs_obj_get_data(filter_to);
+			to = context2->transform;
+		} else {
+			effect_3d_transform_identity(&to);
+		}
+		effect_3d_transform_lerp(&t, &context->transform, &to, f);
+	}
+
+	if (context->direct) {
+		effect_3d_render_direct(context, target, parent, &t);
+		return;
+	}
 
 	if (f == 0.0f && context->processed_frame) {
 		effect_3d_draw_frame(context, out_width, out_height);
@@ -434,20 +581,6 @@ void effect_3d_video_render(void *data, gs_effect_t *eff)
 		bool async = (parent_flags & OBS_SOURCE_ASYNC) != 0;
 		vec4_zero(&clear_color);
 		gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
-
-		// Transformación de este cuadro: la del filtro o, durante una transición de Move,
-		// la mezcla con el otro filtro (o con la neutra al ir a cero)
-		struct effect_3d_transform t = context->transform;
-		if (f > 0.0f && filter_to != context->source) {
-			struct effect_3d_transform to;
-			if (filter_to) {
-				struct effect_3d *context2 = obs_obj_get_data(filter_to);
-				to = context2->transform;
-			} else {
-				effect_3d_transform_identity(&to);
-			}
-			effect_3d_transform_lerp(&t, &context->transform, &to, f);
-		}
 
 		effect_3d_set_matrices(context, &t, w, h, (float)out_width / w, (float)out_height / h);
 
