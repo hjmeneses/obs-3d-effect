@@ -6,6 +6,10 @@ Filtro para **OBS Studio** que gira y mueve una fuente en 3D. Parte del [3D Effe
 
 *[English below](#english)*
 
+<img src="images/3d-effect-2.png" alt="La misma fuente girada con 3D Effect 2: en modo normal se recorta; con Dibujar directo se ve completa" width="600">
+
+<sub>Mismos ajustes, con Conservar tamaño activo: a la izquierda el modo normal recorta lo que se sale del recuadro; a la derecha, Dibujar directo la muestra completa. / Same settings with Keep size on: normal mode clips what leaves the source bounds (left); Direct draw shows it whole (right).</sub>
+
 ## Descarga e instalación
 
 Descarga el último [release](https://github.com/hjmeneses/obs-3d-effect/releases/latest) (compilado para OBS 33):
