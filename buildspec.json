@@ -39,8 +39,8 @@
     },
     "name": "3d-effect-2",
     "displayName": "3D Effect 2",
-    "version": "0.1.5.1",
-    "author": "Exeldro",
+    "version": "2.0.0",
+    "author": "hjmeneses, based on 3D Effect by Exeldro",
     "website": "https://github.com/hjmeneses/obs-3d-effect",
     "email": "60237609+hjmeneses@users.noreply.github.com"
 }

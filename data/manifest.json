@@ -1,7 +1,7 @@
 {
     "display_name": "3D Effect 2",
     "id": "b640b58d-c6c5-48fc-a68b-3b4aaa0204d1",
-    "version": "0.1.5.1",
+    "version": "2.0.0",
     "authors": ["hjmeneses", "Exeldro"],
     "name": "3d-effect-2",
     "description": "3D effect filter for sources in OBS Studio, based on Exeldro's 3D Effect; runs next to the original",

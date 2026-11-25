@@ -623,7 +623,7 @@ void effect_3d_defaults(obs_data_t *settings)
 }
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_AUTHOR("Exeldro");
+OBS_MODULE_AUTHOR("hjmeneses, based on 3D Effect by Exeldro");
 OBS_MODULE_USE_DEFAULT_LOCALE("3d-effect-2", "en-US")
 MODULE_EXPORT const char *obs_module_description(void)
 {
