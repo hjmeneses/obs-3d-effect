@@ -16,7 +16,7 @@ Descarga el último [release](https://github.com/hjmeneses/obs-3d-effect/release
 
 - **Windows:** con OBS cerrado, descomprime el `.zip` en `C:\ProgramData\obs-studio\plugins`.
 - **Ubuntu:** `sudo apt install ./3d-effect-2-<versión>-x86_64-linux-gnu.deb`.
-- **macOS:** instala el `.pkg`.
+- **macOS:** extrae el `.tar.xz` y mueve `3d-effect-2.plugin` a `~/Library/Application Support/obs-studio/plugins`. Compilado para macOS pero sin probar.
 
 En una fuente: **Filtros → + → Efecto 3D 2** (en inglés, **3D Effect 2**).
 
@@ -52,7 +52,7 @@ Con la [plantilla oficial de plugins de OBS](https://github.com/obsproject/obs-p
 
 A filter for **OBS Studio** that rotates and moves a source in 3D. It starts from Exeldro's [3D Effect](https://github.com/exeldro/obs-3d-effect) (all credit for the original filter is his) and adds options so the source keeps its size, does not get clipped when it rotates, and stays smooth at steep angles. It has its own id, so it **runs next to the original**: you can keep both installed and your 3D Effect scenes stay as they are.
 
-**Download:** [latest release](https://github.com/hjmeneses/obs-3d-effect/releases/latest) (built for OBS 33). Windows: with OBS closed, extract the zip into `C:\ProgramData\obs-studio\plugins`. Ubuntu: `sudo apt install ./3d-effect-2-<version>-x86_64-linux-gnu.deb`. macOS: install the `.pkg`. Then add **Filters → + → 3D Effect 2**.
+**Download:** [latest release](https://github.com/hjmeneses/obs-3d-effect/releases/latest) (built for OBS 33). Windows: with OBS closed, extract the zip into `C:\ProgramData\obs-studio\plugins`. Ubuntu: `sudo apt install ./3d-effect-2-<version>-x86_64-linux-gnu.deb`. macOS: extract the `.tar.xz` and move `3d-effect-2.plugin` into `~/Library/Application Support/obs-studio/plugins` (built but untested). Then add **Filters → + → 3D Effect 2**.
 
 New options, in the filter's **Options** group and all off by default:
 
