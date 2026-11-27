@@ -46,6 +46,13 @@ Con la [plantilla oficial de plugins de OBS](https://github.com/obsproject/obs-p
 - `improvements`: las primeras mejoras, todavía con el id del original (reemplazaba al 3D Effect en lugar de convivir con él). Ya no se actualiza.
 - `master`: el original de Exeldro, sin cambios.
 
+## Transparencia y uso de IA
+
+Siguiendo las [directrices de recursos de OBS](https://obsproject.com/forum/resources/) y la [política de IA de OBS Studio](https://github.com/obsproject/obs-studio/blob/master/CONTRIBUTING.md#aimachine-learning-policy):
+
+- **Asistencia de IA:** El filtro original es obra de Exeldro; las extensiones de este fork (Conservar tamaño, Margen, Supersampling 2x, Ocultar cara trasera, Dibujar directo, CI y documentación) se desarrollaron con apoyo de asistentes de programación de IA, bajo dirección, revisión y pruebas del autor.
+- **Verificación y pruebas:** Compilado en CI para Windows, macOS y Ubuntu, y probado en vivo en OBS Studio 33 junto al 3D Effect original y [Shader Dock](https://github.com/hjmeneses/shader-dock) (paquete de macOS compilado pero sin probar en hardware).
+
 ---
 
 ## English
@@ -67,6 +74,13 @@ New options, in the filter's **Options** group and all off by default:
 It works with [Move](https://github.com/exeldro/obs-move-transition) transitions like the original. To rotate it by dragging over the source image, use [Shader Dock](https://github.com/hjmeneses/shader-dock).
 
 Branches: `effect-2` (default) is 3D Effect 2; `improvements` holds the first changes, still under the original id (it replaced 3D Effect instead of running next to it) and is no longer updated; `master` is Exeldro's original, unchanged.
+
+### Development Transparency & AI Disclosure
+
+In compliance with the [OBS Project Resource Guidelines](https://obsproject.com/forum/resources/) and the [OBS AI/Machine Learning Policy](https://github.com/obsproject/obs-studio/blob/master/CONTRIBUTING.md#aimachine-learning-policy):
+
+- **AI Assistance:** The original filter is Exeldro's work; the fork additions (Keep size, Margin, Supersampling 2x, Hide back face, Direct draw, CI, and documentation) were developed with the assistance of AI coding tools under the author's direction, review, and testing.
+- **Verification & Testing:** Built in CI for Windows, macOS, and Ubuntu, and tested live in OBS Studio 33 alongside the original 3D Effect and [Shader Dock](https://github.com/hjmeneses/shader-dock) (macOS package built but untested on hardware).
 
 ## License
 
